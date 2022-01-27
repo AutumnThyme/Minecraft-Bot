@@ -1,4 +1,4 @@
-from multiprocessing.dummy import current_process
+from math import ceil, cos, sin, radians
 import tesserocr
 from tesserocr import PyTessBaseAPI, get_languages, PSM, OEM, RIL
 tesserocr.PyTessBaseAPI(path='C:\\Program Files\\Tesseract-OCR\\tessdata\\')
@@ -11,6 +11,7 @@ import numpy as np
 import re
 import time
 import string
+import pydirectinput
 
 # We only need the ImageGrab class from PIL
 from PIL import ImageGrab, Image
@@ -72,6 +73,16 @@ def image_to_text(api, image):
     return api.GetUTF8Text(), image_array
 
 
+def press_key_for_t(key, t):
+    start_time = time.time()
+    pydirectinput.keyDown(key)
+    while True:
+        current_time = time.time()
+        elapsed_time = current_time - start_time
+        if elapsed_time >= t:
+            pydirectinput.keyUp(key)
+            break
+
 class Vector3:
     def __init__(self, x, y, z) -> None:
         self.x = x
@@ -86,8 +97,27 @@ class Vector3:
     def magnitude(self):
         return (self.x**2 + self.y**2 + self.z**2)**0.5
 
+    def subtract(self, other):
+        return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
+
+    
+    def rotate_about_origin_xy(self, origin, angle):
+        angle = radians(angle)
+        x = self.x - origin.x
+        z = self.z - origin.z
+        tx = x * cos(angle) - z * sin(angle)
+        tz = x * sin(angle) + z * cos(angle)
+        tx += origin.x
+        tz += origin.z
+
+        return Vector3(tx, self.y, tz)
+
+
     def __repr__(self) -> str:
-        f"({self.x}, {self.y}, {self.z})"
+        return f"({self.x}, {self.y}, {self.z})"
+
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y}, {self.z})"
 
 class Vector2:
     def __init__(self, x, y) -> None:
@@ -101,8 +131,15 @@ class Vector2:
     def magnitude(self):
         return (self.x**2 + self.y**2)**0.5
 
+    def subtract(self, other):
+        return Vector2(self.x - other.x, self.y - other.y)
+
     def __repr__(self) -> str:
         return f"({self.x}, {self.y})"
+
+    def __str__(self) -> str:
+        return f"({self.x}, {self.y})"
+
 
 class Block:
     def __init__(self, position: Vector3, block_type) -> None:
@@ -125,7 +162,6 @@ class Map:
         If False, the block is removed. Does not alter map, just alters the returned blocks from this call.
         """
         return {x for x in self.current_map if predicate(x)}
-
 
 
 class MinecraftPlayer:
@@ -156,22 +192,245 @@ class MinecraftPlayer:
 
         self.map = Map()
 
+        self.action_queue = []
+
         self.rotation_action_queue = []
 
         self.movement_action_queue = []
 
     
     def add_rotation_to_queue(self, position: Vector2):
-        self.rotation_action_queue.append(position)
+        self.action_queue.append({"type": "rotation", "value": position})
 
-    def add_movement_to_queue(self, position: Vector3):
-        self.movement_action_queue.append(position)
+    def add_movement_to_queue(self, units_forward: float):
+        self.action_queue.append({"type": "movement", "value": {"units": units_forward, "original": None, "keydown": "None", "slow": False}})
 
-    def serve_rotation(self):
-        if len(self.rotation_action_queue) <= 0:
+    def add_coordinates_to_queue(self, position: Vector3):
+        self.action_queue.append({"type": "coordinate", "value": {"coord": position, "axis": "forward", "keydown": "None", "slow": False, "original": None} })
+
+    def add_click_to_queue(self, msb):
+        self.action_queue.append({ "type": "click", "value": msb})
+
+    def serve_action(self):
+        if len(self.action_queue) <= 0:
             return
+        
+        action = self.action_queue[0]
 
-        desired_rotation = self.rotation_action_queue[0]
+        if action["type"] == "rotation":
+            result = self.serve_rotation()
+            if result:
+                self.action_queue.pop(0)
+        elif action["type"] == "movement":
+            result = self.serve_movement()
+            if result:
+                self.action_queue.pop(0)
+        elif action["type"] == "coordinate":
+            result = self.serve_coordinates()
+            if result:
+                self.action_queue.pop(0)
+        elif action["type"] == "click":
+            result = self.serve_click()
+            if result:
+                self.action_queue.pop(0)
+        else:
+            raise Exception(f"Unkown action {action}")
+        
+
+
+    def serve_click(self):
+        click = self.action_queue[0]["value"]
+        if click == "right":
+            pydirectinput.rightClick(duration=0.1)
+            print("righclicked")
+        elif click == "left":
+            pydirectinput.leftClick(duration=0.1)
+            print("righclicked")
+        
+        return True
+
+    def serve_coordinates(self):
+        """
+        Need to define a control scheme:
+        w, a, s, d
+        ctrl + (w, a ,s, d)
+        
+        Given this control scheme, a players current coords, current orientation, go to desired coordinates (expected that no blocks block the way)
+
+        Move forward (w) until the left and right (a,d) perpendicular axis lines up with the point then move along that axis.
+
+        """
+        desired_position = self.action_queue[0]["value"]["coord"]
+
+        if self.action_queue[0]["value"]["original"] is None:
+            self.action_queue[0]["value"]["original"] = Vector3(self.position.x, self.position.y, self.position.z)
+
+        curr_position = self.position
+
+        curr_rotation = self.rotation
+
+        if curr_rotation.x < 0:
+            curr_rotation.x = 180 + (180 + curr_rotation.x)
+
+        desired_position_rotated = desired_position.rotate_about_origin_xy(self.action_queue[0]["value"]["original"], -curr_rotation.x)
+        curr_position_rotated = curr_position.rotate_about_origin_xy(self.action_queue[0]["value"]["original"], -curr_rotation.x)
+
+        print(f"Moving {curr_position_rotated} -> {desired_position_rotated} Difference {desired_position_rotated.subtract(curr_position_rotated)}")
+
+        forwards = "s"
+        backwards = "d"
+        left = "a"
+        right = "d"
+
+
+        error_tolerance = 1
+
+        # Step 1:
+        # Move forward or backwards until x axis aligns with desired_position_rotated.x
+        if self.action_queue[0]["value"]["axis"] == "forward":
+            difference = desired_position_rotated.z - curr_position_rotated.z
+
+            if abs(difference) < 2:
+                if not self.action_queue[0]["value"]["slow"]:
+                    self.action_queue[0]["value"]["slow"] = True
+                    pydirectinput.keyDown("ctrl")
+            else:
+                if self.action_queue[0]["value"]["slow"]:
+                    pydirectinput.keyUp("ctrl")
+                    self.action_queue[0]["value"]["slow"] = False
+
+            
+
+            if abs(difference) > error_tolerance:
+                if difference < 0:
+                    # Move foward
+                    if self.action_queue[0]["value"]["keydown"] != forwards:
+                        if self.action_queue[0]["value"]["keydown"] != "None":
+                            pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                    pydirectinput.keyDown(forwards)
+                    self.action_queue[0]["value"]["keydown"] = forwards
+
+                elif difference > 0:
+                    # move backwards
+                    if self.action_queue[0]["value"]["keydown"] != backwards:
+                        if self.action_queue[0]["value"]["keydown"] != "None":
+                            pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                    pydirectinput.keyDown(backwards)
+                    self.action_queue[0]["value"]["keydown"] = backwards
+            
+            else:
+                if self.action_queue[0]["value"]["keydown"] != "None":
+                    pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                    self.action_queue[0]["value"]["keydown"] = "None"
+
+                if self.action_queue[0]["value"]["slow"]:
+                    self.action_queue[0]["value"]["slow"] = False
+                    pydirectinput.keyUp("ctrl")
+                self.action_queue[0]["value"]["axis"] = "right"
+                print(f"Aligned forward axis")
+
+        # Step 2:
+        # Move left or right until y axis aligns with desired_position_rotated.y
+        else:
+            difference = desired_position_rotated.x - curr_position_rotated.x
+
+            if abs(difference) < 2:
+                if not self.action_queue[0]["value"]["slow"]:
+                    self.action_queue[0]["value"]["slow"] = True
+                    pydirectinput.keyDown("ctrl")
+            else:
+                if self.action_queue[0]["value"]["slow"]:
+                    pydirectinput.keyUp("ctrl")
+                    self.action_queue[0]["value"]["slow"] = False
+
+            if abs(difference) > error_tolerance:
+                if difference < 0:
+                    # Move left
+                    if self.action_queue[0]["value"]["keydown"] != right:
+                        if self.action_queue[0]["value"]["keydown"] != "None":
+                            pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                    pydirectinput.keyDown(right)
+                    self.action_queue[0]["value"]["keydown"] = right
+
+                elif difference > 0:
+                    # move right
+                    if self.action_queue[0]["value"]["keydown"] != left:
+                        if self.action_queue[0]["value"]["keydown"] != "None":
+                            pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                    pydirectinput.keyDown(left)
+                    self.action_queue[0]["value"]["keydown"] = left
+            
+            else:
+                if self.action_queue[0]["value"]["keydown"] != "None":
+                    pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                    self.action_queue[0]["value"]["keydown"] = "None"
+
+                if self.action_queue[0]["value"]["slow"]:
+                    self.action_queue[0]["value"]["slow"] = False
+                    pydirectinput.keyUp("ctrl")
+
+                print(f"Aligned left axis")
+                print(f"Done moving to coordinates {desired_position}, difference {difference}")
+                return True
+
+        return False
+
+
+    def serve_movement(self):
+        if self.action_queue[0]["value"]["original"] is None:
+            self.action_queue[0]["value"]["original"] = Vector3(self.position.x, self.position.y, self.position.z)
+
+        orig_position = self.action_queue[0]["value"]["original"]
+        curr_position = self.position
+
+        units_desired = self.action_queue[0]["value"]["units"]
+
+        units_moved = curr_position.subtract(orig_position).magnitude()
+
+        difference = units_desired - units_moved
+
+        if abs(difference) < 2:
+            if not self.action_queue[0]["value"]["slow"]:
+                self.action_queue[0]["value"]["slow"] = True
+                pydirectinput.keyDown("ctrl")
+        else:
+            if self.action_queue[0]["value"]["slow"]:
+                pydirectinput.keyUp("ctrl")
+                self.action_queue[0]["value"]["slow"] = False
+
+        if abs(difference) <= 0.1:
+            if self.action_queue[0]["value"]["keydown"] != "None":
+                print("keyup")
+                pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+
+            if self.action_queue[0]["value"]["slow"]:
+                pydirectinput.keyUp("ctrl")
+                self.action_queue[0]["value"]["slow"] = False
+
+            print(f"moved {units_moved} / {units_desired} from {orig_position} to {self.position}")
+            print(f"Done moving {units_desired} units")
+            return True
+        else:
+            print(f"moved {units_moved} / {units_desired} from {orig_position} to {self.position}")
+            if difference > 0:
+                if self.action_queue[0]["value"]["keydown"] != "w":
+                    if self.action_queue[0]["value"]["keydown"] != "None":
+                        pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                pydirectinput.keyDown("w")
+                self.action_queue[0]["value"]["keydown"] = "w"
+            else:
+                if self.action_queue[0]["value"]["keydown"] != "s":
+                    if self.action_queue[0]["value"]["keydown"] != "None":
+                        pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                pydirectinput.keyDown("s")
+                self.action_queue[0]["value"]["keydown"] = "s"
+
+        return False
+
+        
+        
+    def serve_rotation(self):
+        desired_rotation = self.action_queue[0]["value"]
         curr_rotation = self.rotation
 
         # Convert to 360 degree version
@@ -189,21 +448,26 @@ class MinecraftPlayer:
         
         
 
-        mx = linmap(mouse_x, -360, 360, -1500, 1500)
-        my = linmap(mouse_y, -90, 90, -600, 600)
         
+        error_tol = 0.2
 
-        if abs(mouse_x) < 1:
+        if abs(mouse_x) < error_tol:
             mouse_x = 0
-        if abs(mouse_y) < 1:
+        if abs(mouse_y) < error_tol:
             mouse_y = 0
 
-        if abs(mouse_x) < 1 and abs(mouse_y) < 1:
+        mx = linmap(mouse_x, -360, 360, -1500, 1500)
+        my = linmap(mouse_y, -90, 90, -600, 600)
+
+        if abs(mouse_x) < error_tol and abs(mouse_y) < error_tol:
             print(f"Done rotating to {desired_rotation}")
-            self.rotation_action_queue.pop(0)
+            return True
         else:
+            mx = ceil(mx)
+            my = ceil(my)
             print(f"moving mouse: {(int(mx), int(my))}")
             ctypes.windll.user32.mouse_event(0x01, int(mx), int(-my), 0, 0)
+        return False
 
     
     def update(self, api):
@@ -229,7 +493,7 @@ class MinecraftPlayer:
 
         if coord and rot:
             # Go through actions
-            self.serve_rotation()
+            self.serve_action()
 
         return coord and rot
 
@@ -258,7 +522,7 @@ class MinecraftPlayer:
 
             if speed.magnitude() > self.max_speed_tolerance:
                 print("Coord error, invalid speed")
-            print(f"\tCoords - X: {self.position.x}, Y: {self.position.y}, Z: {self.position.z}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dz: {dz}, dt: {dt}")
+            #print(f"\tCoords - X: {self.position.x}, Y: {self.position.y}, Z: {self.position.z}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dz: {dz}, dt: {dt}")
         else:
             #print(f"[Error] Could not parse coordinates this frame")
             return False
@@ -290,7 +554,7 @@ class MinecraftPlayer:
 
             if speed.magnitude() > self.max_rotation_tolerance:
                 print("Coord error, invalid rotation")
-            print(f"\tRotation - X: {self.rotation.x}, Y: {self.rotation.y}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dt: {dt}")
+            #print(f"\tRotation - X: {self.rotation.x}, Y: {self.rotation.y}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dt: {dt}")
         else:
             print(f"[Error] Could not parse rotation this frame {rot_text}")
             return False
@@ -315,11 +579,15 @@ print(f"Loaded Languages:\n", get_languages('C:\\Program Files\\Tesseract-OCR\\t
 
 with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
 
-    player.add_rotation_to_queue(Vector2(100, 90))
-    player.add_rotation_to_queue(Vector2(-100, -90))
+    time.sleep(4)
+    print("Starting")
+    #player.add_rotation_to_queue(Vector2(-90, 0))
+    #
     player.add_rotation_to_queue(Vector2(0, 0))
-    player.add_rotation_to_queue(Vector2(0, 20))
-    player.add_rotation_to_queue(Vector2(20, 0))
+    player.add_movement_to_queue(20)
+    player.add_rotation_to_queue(Vector2(-180, 0))
+    player.add_movement_to_queue(20)
+
 
     # Run forever unless you press Esc
     while True:
