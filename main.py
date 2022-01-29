@@ -75,6 +75,8 @@ def process_image(im, crop_to_activity=False):
         
         last_column = max(0, last_column-3)
         im_arr = im_arr[:, last_column:]
+        
+    im_arr = cv2.bitwise_not(im_arr)
 
     return im_arr
 
@@ -672,6 +674,8 @@ print(f"Loaded Languages:\n", get_languages('C:\\Program Files\\Tesseract-OCR\\t
 
 #with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
 with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
+    api.SetVariable("load_freq_dawg", "false")
+    api.SetVariable("load_system_dawg", "false")
 
     time.sleep(1)
     print("Starting")
