@@ -22,7 +22,7 @@ from PIL import ImageGrab, Image
 def linmap(x, in_min, in_max, out_min, out_max):
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-def process_image(im, crop_to_activity=False):
+def process_image(im, crop_to_activity=False, crop_extra=0):
     """
     Converts the image to a numpy array, then applies preprocessing.
     """
@@ -73,20 +73,24 @@ def process_image(im, crop_to_activity=False):
             if last_column != -1:
                 break
         
-        last_column = max(0, last_column-3)
+        last_column = max(0, last_column+crop_extra)
         im_arr = im_arr[:, last_column:]
-        
+    
     im_arr = cv2.bitwise_not(im_arr)
 
     return im_arr
 
 
-def image_to_text(api, image, crop_to_activity=False):
+def image_to_text(api, image, crop_to_activity=False, crop_extra=0):
     """
     Returns the text and the processed image as a numpy array.
     """
-    image_array = process_image(image, crop_to_activity)
-    image = Image.fromarray(np.uint8(image_array))
+    image_array = process_image(image, crop_to_activity, crop_extra)
+    try:
+        image = Image.fromarray(np.uint8(image_array))
+    except:
+        image_array = process_image(image, crop_to_activity)
+        image = Image.fromarray(np.uint8(image_array))
     api.SetImage(image)
     return api.GetUTF8Text(), image_array
 
@@ -191,17 +195,23 @@ class MinecraftPlayer:
 
         self.coordinate_regex = re.compile(r'([+-]?\d+\.\d+)/([+-]?\d+\.\d+)/([+-]?\d+\.\d+)')
         self.rotation_regex = re.compile(r'[a-zA-Z]+\([a-zA-Z]+\)\(([+-]?\d+\.\d+)/([+-]?\d+\.\d+)\)')
-        self.target_block_position_regex = re.compile(r'TargetedBlock:(\d), (\d), (\d)')
-        self.target_block_type_regex = re.compile(r'minecraft\:(.*?)')
+        self.target_block_position_regex = re.compile(r'([+-]?\d+),([+-]?\d+),([+-]?\d+)')
+        self.target_block_type_regex = re.compile(r'(.*)')
         self.position = Vector3(0, 0, 0)
         self.prev_position = None
         self.rotation = Vector2(0, 0)
         self.prev_rotation = None
+        self.target_position = Vector3(0,0,0)
+        self.prev_target_position = None
+        self.target_type = ""
+        self.prev_target_type = None
+
         self.time = 0
         self.prev_time = None
 
         self.max_speed_tolerance = 10
         self.max_rotation_tolerance = 720
+        self.max_target_tolerance = 100
 
         self.current_position_image = None
         self.current_rotation_image = None
@@ -512,20 +522,17 @@ class MinecraftPlayer:
 
 
         # Block Look Position
-        api.SetVariable("tessedit_char_whitelist", ",-.:" + string.digits + string.ascii_letters.replace('S', ""))
+        api.SetVariable("tessedit_char_whitelist", "-," + string.digits + string.ascii_letters.replace('S', ""))
         im_block_position = ImageGrab.grab(bbox=self.bb_block_coords)
-        block_position_text, self.current_block_position_image = image_to_text(api, im_block_position, crop_to_activity=True)
-        block_position_text = block_position_text.replace(' ',  '').replace('minecreft',  '').replace('minecraft',  '')
+        block_position_text, self.current_block_position_image = image_to_text(api, im_block_position, crop_to_activity=True, crop_extra=160)
+        block_position_text = block_position_text.replace(' ',  '')
 
         # Block Look Type
-        api.SetVariable("tessedit_char_whitelist", "" + string.ascii_lowercase)
+        api.SetVariable("tessedit_char_whitelist", "_" + string.ascii_lowercase)
         im_block_type = ImageGrab.grab(bbox=self.bb_block_type)
-        block_type_text, self.current_block_type_image = image_to_text(api, im_block_type, crop_to_activity=True)
+        block_type_text, self.current_block_type_image = image_to_text(api, im_block_type, crop_to_activity=True, crop_extra=97)
 
         block_type_text = block_type_text.replace(' ', '')
-
-
-        print(f"Looking at: {block_position_text.replace(' ', '')} with type: {block_type_text.replace(' ', '')}")
 
 
         self.time = time.time()
@@ -533,9 +540,12 @@ class MinecraftPlayer:
                 self.prev_time = self.time
         coord = self.update_coords(pos_text)
         rot = self.update_rotation(rot_text)
+        block_pos = self.update_block_position(block_position_text)
+        block_type = self.update_block_type(block_type_text)
+
         self.prev_time = self.time
 
-        if coord and rot:
+        if coord and rot and block_pos and block_type:
             # Go through actions
             self.serve_action()
 
@@ -568,7 +578,7 @@ class MinecraftPlayer:
                 print("Coord error, invalid speed")
             #print(f"\tCoords - X: {self.position.x}, Y: {self.position.y}, Z: {self.position.z}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dz: {dz}, dt: {dt}")
         else:
-            #print(f"[Error] Could not parse coordinates this frame")
+            print(f"[Error] Could not parse coordinates this frame: {pos_text}")
             return False
         return True
 
@@ -600,7 +610,50 @@ class MinecraftPlayer:
                 print("Coord error, invalid rotation")
             #print(f"\tRotation - X: {self.rotation.x}, Y: {self.rotation.y}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dt: {dt}")
         else:
-            print(f"[Error] Could not parse rotation this frame {rot_text}")
+            print(f"[Error] Could not parse rotation this frame: {rot_text}")
+            return False
+        return True
+
+
+    def update_block_position(self, block_position_text):
+        match = self.target_block_position_regex.match(block_position_text)
+
+        if match:
+            x, y, z = match.groups()
+            self.target_position.reassign(float(x), float(y), float(z))
+
+            if self.prev_target_position is None:
+                self.prev_target_position = Vector3(self.target_position.x, self.target_position.y, self.target_position.z)
+
+            dt = self.time - self.prev_time
+            if dt == 0:
+                dt = 0.00001
+            dx = (self.target_position.x - self.prev_target_position.x) / dt
+            dy = (self.target_position.y - self.prev_target_position.y) / dt
+            dz = (self.target_position.z - self.prev_target_position.z) / dt
+
+            speed = Vector3(dx, dy, dz)
+            
+            self.prev_target_position.reassign(self.target_position.x, self.target_position.y, self.target_position.z)
+
+            if speed.magnitude() > self.max_target_tolerance:
+                print("Coord error, invalid speed")
+            print(f"\tTargetCoords - X: {self.target_position.x}, Y: {self.target_position.y}, Z: {self.target_position.z}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dz: {dz}, dt: {dt}")
+        else:
+            print(f"[Error] Could not parse target coordinates this frame: {block_position_text}")
+            return False
+        return True
+
+
+    def update_block_type(self, block_type_text):
+        match = self.target_block_type_regex.match(block_type_text)
+
+        if match:
+            self.prev_target_type = self.target_type
+            self.target_type = match.group(0)
+            print(f"\tTargetType - {self.target_type}")
+        else:
+            print(f"[Error] Could not parse target type this frame: {block_type_text}")
             return False
         return True
 
@@ -672,7 +725,6 @@ bb_block_type = (2560-500, 393, 2560, 411)
 player = MinecraftPlayer(bb_coords, bb_rotation, bb_block_coords, bb_block_type)
 print(f"Loaded Languages:\n", get_languages('C:\\Program Files\\Tesseract-OCR\\tessdata\\'))
 
-#with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
 with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
     api.SetVariable("load_freq_dawg", "false")
     api.SetVariable("load_system_dawg", "false")
