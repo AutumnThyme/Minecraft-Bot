@@ -22,7 +22,7 @@ from PIL import ImageGrab, Image
 def linmap(x, in_min, in_max, out_min, out_max):
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-def process_image(im):
+def process_image(im, crop_to_activity=False):
     """
     Converts the image to a numpy array, then applies preprocessing.
     """
@@ -60,14 +60,30 @@ def process_image(im):
     #blur = cv2.GaussianBlur(cap_arr,(3,3),0)
     ret3, im_arr = cv2.threshold(im_arr,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
 
+
+    if crop_to_activity:
+        last_column = -1
+        for j in range(width):
+            for i in range(height):
+                v = im_arr[i][j]
+
+                if v != 0:
+                    last_column = j
+                    break
+            if last_column != -1:
+                break
+        
+        last_column = max(0, last_column-3)
+        im_arr = im_arr[:, last_column:]
+
     return im_arr
 
 
-def image_to_text(api, image):
+def image_to_text(api, image, crop_to_activity=False):
     """
     Returns the text and the processed image as a numpy array.
     """
-    image_array = process_image(image)
+    image_array = process_image(image, crop_to_activity)
     image = Image.fromarray(np.uint8(image_array))
     api.SetImage(image)
     return api.GetUTF8Text(), image_array
@@ -173,7 +189,7 @@ class MinecraftPlayer:
 
         self.coordinate_regex = re.compile(r'([+-]?\d+\.\d+)/([+-]?\d+\.\d+)/([+-]?\d+\.\d+)')
         self.rotation_regex = re.compile(r'[a-zA-Z]+\([a-zA-Z]+\)\(([+-]?\d+\.\d+)/([+-]?\d+\.\d+)\)')
-        self.target_block_position_regex = re.compile(r'(\d), (\d), (\d)')
+        self.target_block_position_regex = re.compile(r'TargetedBlock:(\d), (\d), (\d)')
         self.target_block_type_regex = re.compile(r'minecraft\:(.*?)')
         self.position = Vector3(0, 0, 0)
         self.prev_position = None
@@ -275,15 +291,23 @@ class MinecraftPlayer:
         desired_position_rotated = desired_position.rotate_about_origin_xy(self.action_queue[0]["value"]["original"], -curr_rotation.x)
         curr_position_rotated = curr_position.rotate_about_origin_xy(self.action_queue[0]["value"]["original"], -curr_rotation.x)
 
-        print(f"Moving {curr_position_rotated} -> {desired_position_rotated} Difference {desired_position_rotated.subtract(curr_position_rotated)}")
+        #print(f"Moving {curr_position} -> {desired_position} Difference {desired_position_rotated.subtract(curr_position_rotated)}")
 
         forwards = "s"
-        backwards = "d"
+        backwards = "w"
         left = "a"
         right = "d"
 
 
         error_tolerance = 1
+
+        differencez = desired_position_rotated.z - curr_position_rotated.z
+        differencex = desired_position_rotated.x - curr_position_rotated.x
+
+        if differencez > error_tolerance and self.action_queue[0]["value"]["axis"] != "forward":
+            self.action_queue[0]["value"]["axis"] = "forward"
+        elif differencex > error_tolerance and self.action_queue[0]["value"]["axis"] != "right":
+            self.action_queue[0]["value"]["axis"] = "right"
 
         # Step 1:
         # Move forward or backwards until x axis aligns with desired_position_rotated.x
@@ -327,7 +351,7 @@ class MinecraftPlayer:
                     self.action_queue[0]["value"]["slow"] = False
                     pydirectinput.keyUp("ctrl")
                 self.action_queue[0]["value"]["axis"] = "right"
-                print(f"Aligned forward axis")
+                #print(f"Aligned forward axis")
 
         # Step 2:
         # Move left or right until y axis aligns with desired_position_rotated.y
@@ -369,8 +393,8 @@ class MinecraftPlayer:
                     self.action_queue[0]["value"]["slow"] = False
                     pydirectinput.keyUp("ctrl")
 
-                print(f"Aligned left axis")
-                print(f"Done moving to coordinates {desired_position}, difference {difference}")
+                #print(f"Aligned left axis")
+                print(f"Done moving to coordinates {desired_position}, real {curr_position}")
                 return True
 
         return False
@@ -484,6 +508,24 @@ class MinecraftPlayer:
         im_rotation = ImageGrab.grab(bbox=self.bb_rotation)
         rot_text, self.current_rotation_image = image_to_text(api, im_rotation)
 
+
+        # Block Look Position
+        api.SetVariable("tessedit_char_whitelist", ",-.:" + string.digits + string.ascii_letters.replace('S', ""))
+        im_block_position = ImageGrab.grab(bbox=self.bb_block_coords)
+        block_position_text, self.current_block_position_image = image_to_text(api, im_block_position, crop_to_activity=True)
+        block_position_text = block_position_text.replace(' ',  '').replace('minecreft',  '').replace('minecraft',  '')
+
+        # Block Look Type
+        api.SetVariable("tessedit_char_whitelist", "" + string.ascii_lowercase)
+        im_block_type = ImageGrab.grab(bbox=self.bb_block_type)
+        block_type_text, self.current_block_type_image = image_to_text(api, im_block_type, crop_to_activity=True)
+
+        block_type_text = block_type_text.replace(' ', '')
+
+
+        print(f"Looking at: {block_position_text.replace(' ', '')} with type: {block_type_text.replace(' ', '')}")
+
+
         self.time = time.time()
         if self.prev_time is None:
                 self.prev_time = self.time
@@ -565,28 +607,85 @@ def move_mouse(x, y):
     ctypes.windll.user32.mouse_event(0x01, x, y, 0, 0)
 
 
+def walk_square(player: MinecraftPlayer, n):
+    origin = Vector3(1.5, -60, -27.5)
+
+    player.add_coordinates_to_queue(origin)
+
+    player.add_coordinates_to_queue(Vector3(origin.x, origin.y, origin.z + n))
+    player.add_coordinates_to_queue(Vector3(origin.x - n, origin.y, origin.z + n))
+    player.add_coordinates_to_queue(Vector3(origin.x - n, origin.y, origin.z))
+    player.add_coordinates_to_queue(Vector3(origin.x, origin.y, origin.z))
+
+
+def make_square(player: MinecraftPlayer, n):
+    """
+    Constructs an nxn square.
+    """
+    assert n > 2
+    player.add_coordinates_to_queue(Vector3(0,0,0))
+
+    for i in range(0, n+1):
+        player.add_coordinates_to_queue(Vector3(i, 0, 0))
+        player.add_rotation_to_queue(Vector2(0, 60))
+        player.add_click_to_queue("right")
+
+    player.add_coordinates_to_queue(Vector3(n+1, 0, 0))
+    player.add_coordinates_to_queue(Vector3(n+1, 0, 2))
+
+    for i in range(2, n+1):
+        if i == 2:
+            i += 1
+        player.add_coordinates_to_queue(Vector3(n+1, 0, i))
+        player.add_rotation_to_queue(Vector2(90, 60))
+        player.add_click_to_queue("right")
+    
+    player.add_coordinates_to_queue(Vector3(n+1, 0, n+1))
+    player.add_coordinates_to_queue(Vector3(n-1, 0, n+1))
+
+    for i in range(2, n+1):
+        player.add_coordinates_to_queue(Vector3(n-i, 0, n+1))
+        player.add_rotation_to_queue(Vector2(180, 60))
+        player.add_click_to_queue("right")
+
+    player.add_coordinates_to_queue(Vector3(-1, 0, n+1))
+    player.add_coordinates_to_queue(Vector3(-1, 0, n-1))
+
+    for i in range(2, n):
+        if i == 2:
+            i = 1.5
+        player.add_coordinates_to_queue(Vector3(-1, 0, n-i))
+        player.add_rotation_to_queue(Vector2(-90, 60))
+        player.add_click_to_queue("right")
+    
 
 
 bb_coords = (45, 210, 400, 230)
 bb_rotation = (75, 265, 550, 285)
-bb_block_coords = (0, 0, 0, 0)
-bb_block_type = (0, 0, 0, 0)
+bb_block_coords = (2560-400, 370, 2560, 391)
+bb_block_type = (2560-500, 393, 2560, 411)
+#bb_block_type = (2560-250, 393, 2560, 412)
 
 
 player = MinecraftPlayer(bb_coords, bb_rotation, bb_block_coords, bb_block_type)
 print(f"Loaded Languages:\n", get_languages('C:\\Program Files\\Tesseract-OCR\\tessdata\\'))
 
-
+#with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
 with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
 
-    time.sleep(4)
+    time.sleep(1)
     print("Starting")
     #player.add_rotation_to_queue(Vector2(-90, 0))
     #
-    player.add_rotation_to_queue(Vector2(0, 0))
-    player.add_movement_to_queue(20)
-    player.add_rotation_to_queue(Vector2(-180, 0))
-    player.add_movement_to_queue(20)
+    #player.add_rotation_to_queue(Vector2(0, 0))
+
+
+    #walk_square(player, 10)
+
+    #player.add_coordinates_to_queue(Vector3(10, 0, 0))
+    #player.add_coordinates_to_queue(Vector3(10, 0, 10))
+    #player.add_coordinates_to_queue(Vector3(0, 0, 10))
+    #player.add_coordinates_to_queue(Vector3(0, 0, 0))
 
 
     # Run forever unless you press Esc
@@ -603,12 +702,16 @@ with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
         #frame = np.vstack((player.current_position_image, player.current_rotation_image))
         height, width = player.current_position_image.shape
         resized_rotation_image = cv2.resize(player.current_rotation_image, (width, height))
-        frame = np.concatenate((player.current_position_image, resized_rotation_image), axis=0)
+        resized_block_position_image = cv2.resize(player.current_block_position_image, (width, height))
+        resized_block_type_image = cv2.resize(player.current_block_type_image, (width, height))
+        frame = np.concatenate((player.current_position_image, resized_rotation_image, resized_block_position_image, resized_block_type_image), axis=0)
 
 
         # cv2.imshow() shows a window display and it is using the image that we got
         # use array as input to image
         cv2.imshow("player", frame)
+
+        #cv2.imshow("type", player.current_block_type_image)
         
 
         # This line will break the while loop when you press Esc
