@@ -16,7 +16,7 @@ import pydirectinput
 # We only need the ImageGrab class from PIL
 from PIL import ImageGrab, Image
 
-from utility import *
+from minecraft import *
 
 
 def move_mouse(x, y):
