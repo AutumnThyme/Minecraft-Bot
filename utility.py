@@ -3,12 +3,6 @@ Module handles all the utility functions and classes for minecraft.py
 """
 
 from math import ceil, cos, sin, radians
-import tesserocr
-from tesserocr import PyTessBaseAPI, get_languages, PSM, OEM, RIL
-tesserocr.PyTessBaseAPI(path='C:\\Program Files\\Tesseract-OCR\\tessdata\\')
-# OCR Screen Scanner
-# By Dornu Inene
-# Libraries that you show have all installed
 import cv2
 import ctypes
 import numpy as np
@@ -17,7 +11,6 @@ import time
 import string
 import pydirectinput
 
-# We only need the ImageGrab class from PIL
 from PIL import ImageGrab, Image
 
 
@@ -171,14 +164,27 @@ class Block:
     def __init__(self, position: Vector3, block_type) -> None:
         self.position = position
         self.type = block_type
+        self.instantiated = False
 
     def __hash__(self) -> int:
         return hash((self.position.x, self.position.y, self.position.z))
 
+    def __str__(self) -> str:
+        return f"{self.type} : {self.position}"
+
+    def __repr__(self) -> str:
+        return f"{self.type} : {self.position}"
+    
+    def __eq__(self, other):
+        if not isinstance(other, type(self)): return NotImplemented
+        return self.position.x == other.position.x and self.position.y == other.position.y and self.position.z == other.position.z
+
 
 class Map:
-    def __init__(self, init_with_blocks=None) -> None:
+    def __init__(self, init_with_blocks=None, shared_map=None, shared_lock=None) -> None:
         self.current_map = {}
+        self.shared_map = shared_map
+        self.shared_lock = shared_lock
         if init_with_blocks != None:
             self.current_map.update({x for x in init_with_blocks})
     
@@ -188,5 +194,13 @@ class Map:
         If False, the block is removed. Does not alter map, just alters the returned blocks from this call.
         """
         return {x for x in self.current_map if predicate(x)}
+
+    
+    def add_block(self, name, position):
+        self.current_map[name] = position
+        with self.shared_lock:
+            if self.shared_map is not None:
+                block = Block(position, name)
+                self.shared_map.add(block)
 
 

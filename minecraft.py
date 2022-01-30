@@ -5,7 +5,7 @@ Module offers api for controlling the player through computer vision and simulat
 from utility import *
 
 class MinecraftPlayer:
-    def __init__(self, bb_coords, bb_rotation, bb_block_coords, bb_block_type) -> None:
+    def __init__(self, bb_coords, bb_rotation, bb_block_coords, bb_block_type, shared_map, shared_lock) -> None:
         self.bb_coords = bb_coords
         self.bb_rotation = bb_rotation
         self.bb_block_coords = bb_block_coords
@@ -14,7 +14,7 @@ class MinecraftPlayer:
         self.coordinate_regex = re.compile(r'([+-]?\d+\.\d+)/([+-]?\d+\.\d+)/([+-]?\d+\.\d+)')
         self.rotation_regex = re.compile(r'[a-zA-Z]+\([a-zA-Z]+\)\(([+-]?\d+\.\d+)/([+-]?\d+\.\d+)\)')
         self.target_block_position_regex = re.compile(r'([+-]?\d+),([+-]?\d+),([+-]?\d+)')
-        self.target_block_type_regex = re.compile(r'(.*)')
+        self.target_block_type_regex = re.compile(r'(.+)')
         self.position = Vector3(0, 0, 0)
         self.prev_position = None
         self.rotation = Vector2(0, 0)
@@ -36,7 +36,7 @@ class MinecraftPlayer:
         self.current_block_position_image = None
         self.current_block_type_image = None
 
-        self.map = Map()
+        self.map = Map(shared_map=shared_map, shared_lock=shared_lock)
 
         self.action_queue = []
 
@@ -128,8 +128,12 @@ class MinecraftPlayer:
         left = "a"
         right = "d"
 
+        tap = False
 
-        error_tolerance = 1
+        tap_duration = 0.04
+        tap_tolerance = 0.6
+
+        error_tolerance = 0.1
 
         differencez = desired_position_rotated.z - curr_position_rotated.z
         differencex = desired_position_rotated.x - curr_position_rotated.x
@@ -153,24 +157,41 @@ class MinecraftPlayer:
                     pydirectinput.keyUp("ctrl")
                     self.action_queue[0]["value"]["slow"] = False
 
-            
+            if abs(difference) <= tap_tolerance:
+                tap = True
 
             if abs(difference) > error_tolerance:
                 if difference < 0:
-                    # Move foward
-                    if self.action_queue[0]["value"]["keydown"] != forwards:
+                    if tap:
                         if self.action_queue[0]["value"]["keydown"] != "None":
                             pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
-                    pydirectinput.keyDown(forwards)
-                    self.action_queue[0]["value"]["keydown"] = forwards
+                            self.action_queue[0]["value"]["keydown"] = "None"
+                        pydirectinput.keyDown(forwards)
+                        time.sleep(tap_duration)
+                        pydirectinput.keyUp(forwards)
+                    else:
+                        # Move foward
+                        if self.action_queue[0]["value"]["keydown"] != forwards:
+                            if self.action_queue[0]["value"]["keydown"] != "None":
+                                pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                        pydirectinput.keyDown(forwards)
+                        self.action_queue[0]["value"]["keydown"] = forwards
 
                 elif difference > 0:
                     # move backwards
-                    if self.action_queue[0]["value"]["keydown"] != backwards:
+                    if tap:
                         if self.action_queue[0]["value"]["keydown"] != "None":
                             pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
-                    pydirectinput.keyDown(backwards)
-                    self.action_queue[0]["value"]["keydown"] = backwards
+                            self.action_queue[0]["value"]["keydown"] = "None"
+                        pydirectinput.keyDown(backwards)
+                        time.sleep(tap_duration)
+                        pydirectinput.keyUp(backwards)
+                    else:
+                        if self.action_queue[0]["value"]["keydown"] != backwards:
+                            if self.action_queue[0]["value"]["keydown"] != "None":
+                                pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                        pydirectinput.keyDown(backwards)
+                        self.action_queue[0]["value"]["keydown"] = backwards
             
             else:
                 if self.action_queue[0]["value"]["keydown"] != "None":
@@ -197,22 +218,41 @@ class MinecraftPlayer:
                     pydirectinput.keyUp("ctrl")
                     self.action_queue[0]["value"]["slow"] = False
 
+            if abs(difference) <= tap_tolerance:
+                tap = True
+
             if abs(difference) > error_tolerance:
                 if difference < 0:
                     # Move left
-                    if self.action_queue[0]["value"]["keydown"] != right:
+                    if tap:
                         if self.action_queue[0]["value"]["keydown"] != "None":
                             pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
-                    pydirectinput.keyDown(right)
-                    self.action_queue[0]["value"]["keydown"] = right
+                            self.action_queue[0]["value"]["keydown"] = "None"
+                        pydirectinput.keyDown(right)
+                        time.sleep(tap_duration)
+                        pydirectinput.keyUp(right)
+                    else:
+                        if self.action_queue[0]["value"]["keydown"] != right:
+                            if self.action_queue[0]["value"]["keydown"] != "None":
+                                pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                        pydirectinput.keyDown(right)
+                        self.action_queue[0]["value"]["keydown"] = right
 
                 elif difference > 0:
                     # move right
-                    if self.action_queue[0]["value"]["keydown"] != left:
+                    if tap:
                         if self.action_queue[0]["value"]["keydown"] != "None":
                             pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
-                    pydirectinput.keyDown(left)
-                    self.action_queue[0]["value"]["keydown"] = left
+                            self.action_queue[0]["value"]["keydown"] = "None"
+                        pydirectinput.keyDown(left)
+                        time.sleep(tap_duration)
+                        pydirectinput.keyUp(left)
+                    else:
+                        if self.action_queue[0]["value"]["keydown"] != left:
+                            if self.action_queue[0]["value"]["keydown"] != "None":
+                                pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
+                        pydirectinput.keyDown(left)
+                        self.action_queue[0]["value"]["keydown"] = left
             
             else:
                 if self.action_queue[0]["value"]["keydown"] != "None":
@@ -363,7 +403,10 @@ class MinecraftPlayer:
 
         self.prev_time = self.time
 
-        if coord and rot and block_pos and block_type:
+        if block_pos and block_type:
+            print(f"Adding block to map {self.target_type}: {self.target_position}")
+            self.map.add_block(self.target_type, self.target_position)
+        if coord and rot:
             # Go through actions
             self.serve_action()
 
