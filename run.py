@@ -33,6 +33,7 @@ class Voxel(Button):
 
 
 def update():
+    global free_roam, pressed_last_frame
     camera.x += held_keys["d"] * 0.1
     camera.x -= held_keys["a"] * 0.1
     camera.z += held_keys["w"] * 0.1
@@ -45,6 +46,13 @@ def update():
 
     camera.rotation_y += held_keys["right arrow"] * 0.8
     camera.rotation_y -= held_keys["left arrow"] * 0.8
+
+    if held_keys["f"] == 1 and not pressed_last_frame:
+        pressed_last_frame = True
+        free_roam = not free_roam
+    else:
+        pressed_last_frame = False
+
 
     sx = 0
     sy = 0
@@ -62,13 +70,13 @@ def update():
                 block.instantiated = True
         sl = len(shared_map)
         #print("Num Blocks ", sl)
-        if sl != 0:
+        if sl != 0 and not free_roam:
             sx /= sl
             sy /= sl
             sz /= sl
-            camera.x = sx - 20
-            camera.y = sy + 20
-            camera.z = sz - 20
+            camera.x = sx - 10
+            camera.y = sy + 10
+            camera.z = sz - 10
 
 
 
@@ -83,6 +91,9 @@ running.set()
 
 
 voxel = Voxel(position=(0,-60,0))
+
+free_roam = False
+pressed_last_frame = False
 
 camera.y = -50
 camera.rotation_x = 30

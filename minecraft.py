@@ -57,6 +57,13 @@ class MinecraftPlayer:
     def add_click_to_queue(self, msb):
         self.action_queue.append({ "type": "click", "value": msb})
 
+    def add_scan_to_queue(self):
+        """
+        Add an action to scan the 3x3 cube surrounding the player.
+        """
+        self.action_queue.append({"type": "scan", "Origin": None, })
+
+
     def serve_action(self):
         if len(self.action_queue) <= 0:
             return
@@ -83,7 +90,6 @@ class MinecraftPlayer:
             raise Exception(f"Unkown action {action}")
         
 
-
     def serve_click(self):
         click = self.action_queue[0]["value"]
         if click == "right":
@@ -94,6 +100,7 @@ class MinecraftPlayer:
             print("righclicked")
         
         return True
+
 
     def serve_coordinates(self):
         """
@@ -320,8 +327,7 @@ class MinecraftPlayer:
                 self.action_queue[0]["value"]["keydown"] = "s"
 
         return False
-
-        
+      
         
     def serve_rotation(self):
         desired_rotation = self.action_queue[0]["value"]

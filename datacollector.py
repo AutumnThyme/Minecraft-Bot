@@ -12,6 +12,54 @@ def move_mouse(x, y):
     ctypes.windll.user32.mouse_event(0x01, x, y, 0, 0)
 
 
+def scan_63(player: MinecraftPlayer):
+    angles = [
+        # Row 1
+        Vector2(0, 60),
+        Vector2(47, 50),
+        Vector2(65, 37),
+        Vector2(70, 22),
+        Vector2(70, 3),
+
+        # Row 2
+        Vector2(90, 60),
+        Vector2(90, 40),
+        Vector2(90, 22),
+        Vector2(90, 3),
+
+        # Row 3
+        Vector2(-179, 60),
+        Vector2(135, 50),
+        Vector2(117, 37),
+        Vector2(112, 22),
+        Vector2(112, 3),
+    ]
+
+    for angle in angles:
+        player.add_rotation_to_queue(angle)
+
+
+def scan_333(player: MinecraftPlayer):
+    """
+    From the current coordinate, look a the 3x3 cube surrounding the player.
+    """
+    y_levels = [90, 60, 35, 0, -30, -55, -90]
+    x_levels = [0, 30, 50, 90, 120, 144, 180, -140, -188, -90, -50, -30, 0]
+
+
+    ey_levels = [50, -45]
+    ex_levels = [45, 135, -135, -44]
+
+    # Handle front back left right
+    for x in x_levels:
+        for y in y_levels:
+            player.add_rotation_to_queue(Vector2(x, y))
+
+    for x in ex_levels:
+        for y in ey_levels:
+            player.add_rotation_to_queue(Vector2(x, y))
+
+
 def walk_fill_square(player: MinecraftPlayer, n):
     """
     Walk over the filled square from current pos to n
@@ -48,11 +96,12 @@ def make_square(player: MinecraftPlayer, n):
     Constructs an nxn square.
     """
     assert n > 2
-    player.add_coordinates_to_queue(Vector3(0,0,0))
+    player.add_rotation_to_queue(Vector2(0, 0))
+    player.add_coordinates_to_queue(Vector3(0.5,-60,0.5))
 
     for i in range(0, n+1):
         player.add_coordinates_to_queue(Vector3(i, 0, 0))
-        player.add_rotation_to_queue(Vector2(0, 60))
+        player.add_rotation_to_queue(Vector2(0, 50))
         player.add_click_to_queue("right")
 
     player.add_coordinates_to_queue(Vector3(n+1, 0, 0))
@@ -62,7 +111,7 @@ def make_square(player: MinecraftPlayer, n):
         if i == 2:
             i += 1
         player.add_coordinates_to_queue(Vector3(n+1, 0, i))
-        player.add_rotation_to_queue(Vector2(90, 60))
+        player.add_rotation_to_queue(Vector2(90, 50))
         player.add_click_to_queue("right")
     
     player.add_coordinates_to_queue(Vector3(n+1, 0, n+1))
@@ -70,7 +119,7 @@ def make_square(player: MinecraftPlayer, n):
 
     for i in range(2, n+1):
         player.add_coordinates_to_queue(Vector3(n-i, 0, n+1))
-        player.add_rotation_to_queue(Vector2(180, 60))
+        player.add_rotation_to_queue(Vector2(180, 50))
         player.add_click_to_queue("right")
 
     player.add_coordinates_to_queue(Vector3(-1, 0, n+1))
@@ -80,7 +129,7 @@ def make_square(player: MinecraftPlayer, n):
         if i == 2:
             i = 1.5
         player.add_coordinates_to_queue(Vector3(-1, 0, n-i))
-        player.add_rotation_to_queue(Vector2(-90, 60))
+        player.add_rotation_to_queue(Vector2(-90, 50))
         player.add_click_to_queue("right")
     
 
@@ -92,15 +141,15 @@ def start(shared_map, shared_lock, running):
     bb_block_type = (2560-500, 393, 2560, 411)
 
 
-    multi_bb_coords = (45, 190, 400, 210)
-    multi_bb_rotation = (75, 245, 550, 265)
-    multi_bb_block_coords = (2560-400, 370, 2560, 391)
-    multi_bb_block_type = (2560-500, 393, 2560, 411)
+    #bb_coords = (45, 190, 400, 210)
+    #bb_rotation = (75, 245, 550, 265)
+    #bb_block_coords = (2560-400, 370, 2560, 391)
+    #bb_block_type = (2560-500, 393, 2560, 411)
 
     #bb_block_type = (2560-250, 393, 2560, 412)
 
 
-    player = MinecraftPlayer(multi_bb_coords, multi_bb_rotation, multi_bb_block_coords, multi_bb_block_type, shared_map, shared_lock)
+    player = MinecraftPlayer(bb_coords, bb_rotation, bb_block_coords, bb_block_type, shared_map, shared_lock)
     print(f"Loaded Languages:\n", get_languages('C:\\Program Files\\Tesseract-OCR\\tessdata\\'))
 
     with PyTessBaseAPI(lang='mc', psm=13, oem=3) as api:
@@ -109,6 +158,10 @@ def start(shared_map, shared_lock, running):
 
         time.sleep(4)
         print("Starting")
+
+        scan_63(player)
+
+        #make_square(player, 10)
 
         #walk_fill_square(player, 10)
 
