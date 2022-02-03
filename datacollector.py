@@ -161,9 +161,11 @@ def start(shared_map, shared_lock, running):
 
         scan_63(player)
 
-        #make_square(player, 10)
-
-        #walk_fill_square(player, 10)
+        # used to record the time when we processed last frame
+        prev_frame_time = 0
+        
+        # used to record the time at which we processed current frame
+        new_frame_time = 0
 
         # Run forever unless you press Esc
         while running.is_set():
@@ -174,8 +176,23 @@ def start(shared_map, shared_lock, running):
             resized_rotation_image = cv2.resize(player.current_rotation_image, (width, height))
             resized_block_position_image = cv2.resize(player.current_block_position_image, (width, height))
             resized_block_type_image = cv2.resize(player.current_block_type_image, (width, height))
-            frame = np.concatenate((player.current_position_image, resized_rotation_image, resized_block_position_image, resized_block_type_image), axis=0)
+            
+            new_frame_time = time.time()
+            fps = 1/(new_frame_time-prev_frame_time)
+            prev_frame_time = new_frame_time
+        
+            # converting the fps into integer
+            fps = int(fps)
+        
+            # converting the fps to string so that we can display it on frame
+            # by using putText function
+            fps = "fps: "+ str(fps)
+            empty = np.zeros((height, width))
+            cv2.putText(empty, fps, (5, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
+            images = (empty, player.current_position_image, resized_rotation_image, resized_block_position_image, resized_block_type_image)
+
+            frame = np.concatenate(images, axis=0)
 
             cv2.imshow("player", frame)
 

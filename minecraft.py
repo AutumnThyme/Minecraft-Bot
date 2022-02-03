@@ -3,6 +3,7 @@ Module offers api for controlling the player through computer vision and simulat
 """
 
 from utility import *
+import mss
 
 class MinecraftPlayer:
     def __init__(self, bb_coords, bb_rotation, bb_block_coords, bb_block_type, shared_map, shared_lock) -> None:
@@ -43,6 +44,8 @@ class MinecraftPlayer:
         self.rotation_action_queue = []
 
         self.movement_action_queue = []
+
+        self.screen = mss.mss()
 
     
     def add_rotation_to_queue(self, position: Vector2):
@@ -376,27 +379,38 @@ class MinecraftPlayer:
         """
         # Position
         api.SetVariable("tessedit_char_whitelist", "./-0123456789")
-        im_position = ImageGrab.grab(bbox=self.bb_coords)
+        #im_position = ImageGrab.grab(bbox=self.bb_coords)
+        mon = {"top": self.bb_coords[1], "left": self.bb_coords[0], "width": self.bb_coords[2] - self.bb_coords[0], "height": self.bb_coords[3] - self.bb_coords[1]}
+        im_position = self.screen.grab(mon)
         pos_text, self.current_position_image = image_to_text(api, im_position)
 
         # Rotation
         api.SetVariable("tessedit_char_whitelist", "./-()" + string.digits + string.ascii_letters.replace('S', ""))
-        im_rotation = ImageGrab.grab(bbox=self.bb_rotation)
+        #im_rotation = ImageGrab.grab(bbox=self.bb_rotation)
+
+        mon = {"top": self.bb_rotation[1], "left": self.bb_rotation[0], "width": self.bb_rotation[2] - self.bb_rotation[0], "height": self.bb_rotation[3] - self.bb_rotation[1]}
+        im_rotation = self.screen.grab(mon)
         rot_text, self.current_rotation_image = image_to_text(api, im_rotation)
 
 
         # Block Look Position
         api.SetVariable("tessedit_char_whitelist", "-," + string.digits + string.ascii_letters.replace('S', ""))
-        im_block_position = ImageGrab.grab(bbox=self.bb_block_coords)
+        #im_block_position = ImageGrab.grab(bbox=self.bb_block_coords)
+
+        mon = {"top": self.bb_block_coords[1], "left": self.bb_block_coords[0], "width": self.bb_block_coords[2] - self.bb_block_coords[0], "height": self.bb_block_coords[3] - self.bb_block_coords[1]}
+        im_block_position = self.screen.grab(mon)
         block_position_text, self.current_block_position_image = image_to_text(api, im_block_position, crop_to_activity=True, crop_extra=160)
         block_position_text = block_position_text.replace(' ',  '')
 
         # Block Look Type
         api.SetVariable("tessedit_char_whitelist", "_" + string.ascii_lowercase)
-        im_block_type = ImageGrab.grab(bbox=self.bb_block_type)
+        #im_block_type = ImageGrab.grab(bbox=self.bb_block_type)
+
+        mon = {"top": self.bb_block_type[1], "left": self.bb_block_type[0], "width": self.bb_block_type[2] - self.bb_block_type[0], "height": self.bb_block_type[3] - self.bb_block_type[1]}
+        im_block_type = self.screen.grab(mon)
         block_type_text, self.current_block_type_image = image_to_text(api, im_block_type, crop_to_activity=True, crop_extra=97)
 
-        block_type_text = block_type_text.replace(' ', '')
+        #block_type_text = block_type_text.replace(' ', '')
 
 
         self.time = time.time()

@@ -3,6 +3,7 @@ Module handles all the utility functions and classes for minecraft.py
 """
 
 from math import ceil, cos, sin, radians
+from turtle import position
 import cv2
 import ctypes
 import numpy as np
@@ -10,14 +11,43 @@ import re
 import time
 import string
 import pydirectinput
+import cython
 
 from PIL import ImageGrab, Image
-
 
 
 """Transforms the value x from the input range to the output range."""
 def linmap(x, in_min, in_max, out_min, out_max):
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+
+
+def v_filter_gray(rgb):
+    # Expect len 3
+    r, g, b = rgb
+
+    r = (r + 150) / 2
+    g = (g + 150) / 2
+    b = (b + 150) / 2
+
+    mean = (r + g + b) / 3
+    diffr = abs(mean - r)
+    diffg = abs(mean - g)
+    diffb = abs(mean - b)
+
+    maxdev = 2
+
+    if (diffr + diffg + diffb) > maxdev:
+        return 0
+    return rgb
+
+
+
+def filter_gray(na):
+    mean = np.mean(na, axis=2, keepdims=True)
+
+    res = (na[..., 2] / na[..., 0]) * 100/l
+    return res.astype(np.uint8)
+
 
 def process_image(im, crop_to_activity=False, crop_extra=0):
     """
@@ -27,7 +57,16 @@ def process_image(im, crop_to_activity=False, crop_extra=0):
         
     height, width, depth = im_arr.shape
 
-    for i in range(height):
+    hsv = cv2.cvtColor(im_arr, cv2.COLOR_BGR2HSV)
+
+    mask = cv2.inRange(hsv, np.array([0,0,0]), np.array([179,2,255]))
+
+    im_arr = cv2.bitwise_and(im_arr, im_arr, mask = mask) 
+
+    #im_arr = np.apply_along_axis(v_filter_gray, 2, im_arr)
+
+
+    """for i in range(height):
         for j in range(width):
             r, g, b = im_arr[i][j]
 
@@ -45,9 +84,9 @@ def process_image(im, crop_to_activity=False, crop_extra=0):
             if (diffr + diffg + diffb) > maxdev:
                 im_arr[i][j][0] = 0
                 im_arr[i][j][1] = 0
-                im_arr[i][j][2] = 0
+                im_arr[i][j][2] = 0"""
             
-
+    #im_arr = cv2.cvtColor(im_arr, cv2.COLOR_HLS2BGR)
 
     im_arr = cv2.cvtColor(im_arr, cv2.COLOR_BGR2GRAY)
 
@@ -59,7 +98,12 @@ def process_image(im, crop_to_activity=False, crop_extra=0):
 
 
     if crop_to_activity:
-        last_column = -1
+        positions = np.nonzero(im_arr)
+        if len(positions) > 0:
+            left = np.min(positions[1], initial=width-1)
+            last_column = max(0, left+crop_extra)
+            im_arr = im_arr[:, last_column:]
+        """last_column = -1
         for j in range(width):
             for i in range(height):
                 v = im_arr[i][j]
@@ -71,7 +115,7 @@ def process_image(im, crop_to_activity=False, crop_extra=0):
                 break
         
         last_column = max(0, last_column+crop_extra)
-        im_arr = im_arr[:, last_column:]
+        im_arr = im_arr[:, last_column:]"""
     
     im_arr = cv2.bitwise_not(im_arr)
 
