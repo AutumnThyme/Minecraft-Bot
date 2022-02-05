@@ -3,7 +3,6 @@ Module handles all the utility functions and classes for minecraft.py
 """
 
 from math import ceil, cos, sin, radians
-from turtle import position
 import cv2
 import ctypes
 import numpy as np
@@ -11,6 +10,7 @@ import re
 import time
 import string
 import pydirectinput
+pydirectinput.PAUSE = 0
 import cython
 
 from PIL import ImageGrab, Image
@@ -146,6 +146,11 @@ def press_key_for_t(key, t):
             pydirectinput.keyUp(key)
             break
 
+class BlockRotation:
+    def __init__(self, rotation, position) -> None:
+        self.rotation = rotation
+        self.position = position
+
 class Vector3:
     def __init__(self, x, y, z) -> None:
         self.x = x
@@ -163,6 +168,8 @@ class Vector3:
     def subtract(self, other):
         return Vector3(self.x - other.x, self.y - other.y, self.z - other.z)
 
+    def add(self, other):
+        return Vector3(self.x + other.x, self.y + other.y, self.z + other.z)
     
     def rotate_about_origin_xy(self, origin, angle):
         angle = radians(angle)
@@ -175,6 +182,8 @@ class Vector3:
 
         return Vector3(tx, self.y, tz)
 
+    def copy(self):
+        return Vector3(self.x, self.y, self.z)
 
     def __repr__(self) -> str:
         return f"({self.x}, {self.y}, {self.z})"
@@ -241,7 +250,8 @@ class Map:
 
     
     def add_block(self, name, position):
-        self.current_map[name] = position
+        if position not in self.current_map:
+            self.current_map[position] = Block(position, name)
         with self.shared_lock:
             if self.shared_map is not None:
                 block = Block(position, name)

@@ -159,8 +159,13 @@ def start(shared_map, shared_lock, running):
         time.sleep(4)
         print("Starting")
 
-        scan_63(player)
-
+        player.add_coordinate_to_queue(Vector3(30, -60, 30))
+        player.add_coordinate_to_queue(Vector3(40, -60, 30))
+        player.add_coordinate_to_queue(Vector3(40, -60, 40))
+        player.add_coordinate_to_queue(Vector3(30, -60, 40))
+        player.add_coordinate_to_queue(Vector3(30, -60, 30))
+        
+    
         # used to record the time when we processed last frame
         prev_frame_time = 0
         
@@ -194,11 +199,11 @@ def start(shared_map, shared_lock, running):
 
             frame = np.concatenate(images, axis=0)
 
-            cv2.imshow("player", frame)
+            #cv2.imshow("player", frame)
 
             # This line will break the while loop when you press Esc
-            if cv2.waitKey(1) == 27:
-                break
+            #if cv2.waitKey(1) == 27:
+                #break
 
     # This will make sure all windows created from cv2 is destroyed
-    cv2.destroyAllWindows()
+    #cv2.destroyAllWindows()

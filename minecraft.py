@@ -1,7 +1,7 @@
 """
 Module offers api for controlling the player through computer vision and simulating keypresses.
 """
-
+from math import floor
 from utility import *
 import mss
 
@@ -54,8 +54,25 @@ class MinecraftPlayer:
     def add_movement_to_queue(self, units_forward: float):
         self.action_queue.append({"type": "movement", "value": {"units": units_forward, "original": None, "keydown": "None", "slow": False}})
 
-    def add_coordinates_to_queue(self, position: Vector3):
-        self.action_queue.append({"type": "coordinate", "value": {"coord": position, "axis": "forward", "keydown": "None", "slow": False, "original": None} })
+    def add_coordinates_long_to_queue(self, position: Vector3):
+        self.action_queue.append({"type": "coordinates_long", "value": {"coord": position, "axis": "forward", "keydown": "None", "slow": False, "original": None} })
+
+    def add_coordinate_to_queue(self, position: Vector3):
+        self.action_queue.append({"type": "coordinate", "value": {"coord": position, "keydown_z": None, "keydown_x": None, "crouch": False, "original": None} })
+
+    def add_pathfind_coordinate_to_queue(self, position: Vector3):
+        self.action_queue.append({"type": "coordinate", "value": {"coord": position, "state": "start", "original": None} })
+
+    def _insert_events(self, events, position):
+        return self.action_queue[:position] + events + self.action_queue[position:]
+
+    def _get_event(self, event_name, value):
+        if event_name == "rotation":
+            return {"type": "rotation", "value": value}
+        elif event_name == "coordinate":
+            return {"type": "coordinate", "value": {"coord": value, "keydown_z": None, "keydown_x": None, "crouch": False, "original": None} }
+        else:
+            raise Exception(f"[ERROR] Unknown Event {event_name}")
 
     def add_click_to_queue(self, msb):
         self.action_queue.append({ "type": "click", "value": msb})
@@ -82,7 +99,7 @@ class MinecraftPlayer:
             if result:
                 self.action_queue.pop(0)
         elif action["type"] == "coordinate":
-            result = self.serve_coordinates()
+            result = self.serve_coordinate()
             if result:
                 self.action_queue.pop(0)
         elif action["type"] == "click":
@@ -105,7 +122,190 @@ class MinecraftPlayer:
         return True
 
 
-    def serve_coordinates(self):
+
+    def serve_pathfind(self):
+        """
+        Uses simple pathfinding to move to a coordinate (currently only x and z pathfinding)
+        avoids simple blocked path (blocked = blocks in way, holes)
+        If all paths are blocked, backtrack and set current node to blocked. (Binary d*?)
+        We use event loops to break away to other actions while pathfinding.
+        Event loops work by inserting events after this one, then after the inserted events
+        we insert another pathfinding event with some managed state.
+        """
+        desired_position = self.action_queue[0]["value"]["coord"]
+        state = self.action_queue[0]["value"]["state"]
+        original = self.action_queue[0]["value"]["original"]
+
+        current_position = self.position
+
+        block_position = self.position.copy()
+        block_position.x = min(floor(block_position.x), ceil(block_position.x))
+        block_position.y = min(floor(block_position.y), ceil(block_position.y))
+        block_position.z = min(floor(block_position.z), ceil(block_position.z))
+        
+        # For now lets just do 2d pathfinding with 3d obstacles.
+        delta_position = desired_position.subtract(current_position)
+
+        # Should be larger than coordinate event tolerance
+        coordinate_tolerance = 0.5
+
+        if abs(delta_position.x) < coordinate_tolerance and abs(delta_position.y) < coordinate_tolerance:
+            print(f"[INFO] Pathfinding complete, arrived at {desired_position} with error {delta_position}")
+            return True
+        
+        if state == "start":
+            # Search area for coordinates and obstacles (defined by 3x3 ground + walls on each side of 3x3 ground)
+            # We can use the insertion of rotation events + reinsertion of pathfind event at index 1 afterwards to interrupt the current process
+            # and start the rotation events, after those complete, return to pathfinding.
+            
+            # Recall that player position = block_on.y + 1
+            rotations = [
+                # Forward
+                BlockRotation(Vector2(0,0), block_position.add(Vector3(0, 1, 1))),
+                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, 0, 1))),
+                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, -1, 1))),
+                BlockRotation(Vector2(0,90), block_position.add(Vector3(0, -1, 0))),
+                # Left
+                BlockRotation(Vector2(-90, 0), block_position.add(Vector3(1, 1, 0))),
+                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, 0, 0))),
+                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, -1, 0))),
+                # Backwards
+                BlockRotation(Vector2(180, 0), block_position.add(Vector3(0, 1, -1))),
+                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, 0, -1))),
+                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, -1, -1))),
+                # Right
+                BlockRotation(Vector2(90, 0), block_position.add(Vector3(-1, 1, 0))),
+                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, 0, 0))),
+                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, -1, 0))),
+            ]
+
+            # Remove unneeded block scans
+            events = [self._get_event("rotation", x.rotation) for x in rotations if x.position not in self.map]
+            self.action_queue[0]["value"]["state"] = "move"
+            events.append(self.action_queue[0])
+            
+            # Insert loop into event queue
+            self._insert_events(events, 1)
+            return True
+        elif state == "move":
+            # Given the map and current position, determine the best position to pick.
+            # If current position is completely blocked, set current position to blocked and backtrack.
+            # We can block the position by inserting a block into the map with id "blocked coordinate" and the given position.y+2.
+            pass
+        else:
+            raise Exception(f"[ERROR] Unknown Pathfinding State: {state}")
+
+    def serve_coordinate(self):
+        """
+        Walk to the given coordinate with no pathfinding.
+        """
+        desired_position = self.action_queue[0]["value"]["coord"]
+        if self.action_queue[0]["value"]["original"] is None:
+                self.action_queue[0]["value"]["original"] = self.position.copy()
+
+        curr_rotation = self.rotation
+        if curr_rotation.x < 0:
+            curr_rotation.x = 180 + (180 + curr_rotation.x)
+
+        desired_position_rotated: Vector3 = desired_position.rotate_about_origin_xy(self.action_queue[0]["value"]["original"], -curr_rotation.x)
+        curr_position_rotated: Vector3 = self.position.rotate_about_origin_xy(self.action_queue[0]["value"]["original"], -curr_rotation.x)
+
+        delta_position = desired_position_rotated.subtract(curr_position_rotated)
+
+        forwards = "w"
+        backwards = "s"
+        left = "a"
+        right = "d"
+        crouch = "ctrl"
+
+        # Set tolerances
+        tap_duration = 0.03
+        tap_tolerance = 0.1
+        crouch_tolerance = 0.5
+        error_tolerance = 0.05
+
+        if abs(delta_position.x) < error_tolerance and abs(delta_position.z) < error_tolerance:
+            # Clean up keys pressed and return True to indicate task completion.
+            if self.action_queue[0]["value"]["crouch"]:
+                pydirectinput.keyUp(crouch)
+            pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_z"])
+            pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_x"])
+            print(f"[TASK] Done moving to coordinates {desired_position}")
+            return True
+
+        if delta_position.magnitude() < crouch_tolerance:
+                # Crouch if needed
+                self.action_queue[0]["value"]["crouch"] = True
+                pydirectinput.keyDown(crouch)
+
+        # Handle forward backwards.
+        if abs(delta_position.z) > error_tolerance:
+            # Need to move forward or backwards
+            if delta_position.z >= 0:
+                # Behind point, move forwards
+                if abs(delta_position.z) < tap_tolerance:
+                    # Tap direction if needed.
+                    pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_z"])
+                    self.action_queue[0]["value"]["keydown_z"] = None
+                    pydirectinput.keyDown(forwards)
+                    time.sleep(tap_duration)
+                    pydirectinput.keyUp(forwards)
+                else:
+                    if self.action_queue[0]["value"]["keydown_z"] != forwards:
+                        pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_z"])
+                        pydirectinput.keyDown(forwards)
+                        self.action_queue[0]["value"]["keydown_z"] = forwards
+            else:
+                # In front of point, move backwards
+                if abs(delta_position.z) < tap_tolerance:
+                    # Tap direction if needed.
+                    pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_z"])
+                    self.action_queue[0]["value"]["keydown_z"] = None
+                    pydirectinput.keyDown(backwards)
+                    time.sleep(tap_duration)
+                    pydirectinput.keyUp(backwards)
+                else:
+                    if self.action_queue[0]["value"]["keydown_z"] != backwards:
+                        pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_z"])
+                        pydirectinput.keyDown(backwards)
+                        self.action_queue[0]["value"]["keydown_z"] = backwards
+
+        # Handle left right.
+        if abs(delta_position.x) > error_tolerance:
+            # Need to move forward or backwards
+            if delta_position.x >= 0:
+                # Right of point, move left.
+                if abs(delta_position.x) < tap_tolerance:
+                    # Tap direction if needed.
+                    pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_x"])
+                    self.action_queue[0]["value"]["keydown_x"] = None
+                    pydirectinput.keyDown(left)
+                    time.sleep(tap_duration)
+                    pydirectinput.keyUp(left)
+                else:
+                    if self.action_queue[0]["value"]["keydown_x"] != left:
+                        pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_x"])
+                        pydirectinput.keyDown(left)
+                        self.action_queue[0]["value"]["keydown_x"] = left
+            else:
+                # Left of point, move right.
+                if abs(delta_position.x) < tap_tolerance:
+                    # Tap direction if needed.
+                    pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_x"])
+                    self.action_queue[0]["value"]["keydown_x"] = None
+                    pydirectinput.keyDown(right)
+                    time.sleep(tap_duration)
+                    pydirectinput.keyUp(right)
+                else:
+                    if self.action_queue[0]["value"]["keydown_x"] != right:
+                        pydirectinput.keyUp(self.action_queue[0]["value"]["keydown_x"])
+                        pydirectinput.keyDown(right)
+                        self.action_queue[0]["value"]["keydown_x"] = right
+                
+        return False
+
+
+    def serve_coordinates_long(self):
         """
         Need to define a control scheme:
         w, a, s, d
@@ -347,10 +547,6 @@ class MinecraftPlayer:
         mouse_x = diff + 360 if diff < -180 else diff
         
         mouse_y = curr_rotation.y - desired_rotation.y
-        
-        
-        
-
         
         error_tol = 0.2
 
