@@ -2,6 +2,7 @@
 Module handles all the utility functions and classes for minecraft.py
 """
 
+from cmath import isclose
 from math import ceil, cos, sin, radians
 import cv2
 import ctypes
@@ -19,6 +20,65 @@ from PIL import ImageGrab, Image
 """Transforms the value x from the input range to the output range."""
 def linmap(x, in_min, in_max, out_min, out_max):
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+
+
+def get_neighboring_blocks(block_position):
+    """
+    Returns an array of BlockRotation elements.
+    """
+    return [
+                # Forward
+                BlockRotation(Vector2(0,0), block_position.add(Vector3(0, 1, 1))),
+                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, 0, 1))),
+                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, -1, 1))),
+                BlockRotation(Vector2(0,90), block_position.add(Vector3(0, -1, 0))),
+                # Left
+                BlockRotation(Vector2(-90, 0), block_position.add(Vector3(1, 1, 0))),
+                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, 0, 0))),
+                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, -1, 0))),
+                # Backwards
+                BlockRotation(Vector2(180, 0), block_position.add(Vector3(0, 1, -1))),
+                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, 0, -1))),
+                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, -1, -1))),
+                # Right
+                BlockRotation(Vector2(90, 0), block_position.add(Vector3(-1, 1, 0))),
+                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, 0, 0))),
+                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, -1, 0))),
+            ]
+
+
+def get_neighboring_blocks_dict(block_position):
+    return {
+        "forward": {
+            "start": BlockRotation(Vector2(0,60), block_position.add(Vector3(0, -1, 1))),
+            "rest": [
+                BlockRotation(Vector2(0,0), block_position.add(Vector3(0, 1, 1))),
+                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, 0, 1))),
+            ],
+        },
+        "left": {
+            "start": BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, -1, 0))),
+            "rest": [
+                BlockRotation(Vector2(-90, 0), block_position.add(Vector3(1, 1, 0))),
+                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, 0, 0))),
+            ],
+        },
+            
+        "backwards": {
+            "start": BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, -1, -1))),
+            "rest": [
+                BlockRotation(Vector2(180, 0), block_position.add(Vector3(0, 1, -1))),
+                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, 0, -1))),
+            ],
+        }, 
+        "right": {
+            "start": BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, -1, 0))),
+            "rest": [
+                BlockRotation(Vector2(90, 0), block_position.add(Vector3(-1, 1, 0))),
+                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, 0, 0))),
+            ],
+        },
+    }
 
 
 def v_filter_gray(rgb):
@@ -151,6 +211,9 @@ class BlockRotation:
         self.rotation = rotation
         self.position = position
 
+    def copy(self):
+        return BlockRotation(self.rotation.copy(), self.position.copy())
+
 class Vector3:
     def __init__(self, x, y, z) -> None:
         self.x = x
@@ -181,6 +244,22 @@ class Vector3:
         tz += origin.z
 
         return Vector3(tx, self.y, tz)
+    
+    def __eq__(self, other):
+        """Overrides the default implementation"""
+        if isinstance(other, Vector3):
+            return isclose(self.x, other.x, rel_tol=1e-09, abs_tol=0.0) \
+                and isclose(self.y, other.y, rel_tol=1e-09, abs_tol=0.0) \
+                and isclose(self.z, other.z, rel_tol=1e-09, abs_tol=0.0)
+            #return self.x == other.x and self.y == other.y and self.z == other.z
+        return False
+    
+    def __ne__(self, other):
+        """Overrides the default implementation (unnecessary in Python 3)"""
+        return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash((self.x, self.y, self.z))
 
     def copy(self):
         return Vector3(self.x, self.y, self.z)
@@ -199,6 +278,9 @@ class Vector2:
     def reassign(self, x, y):
         self.x = x
         self.y = y
+
+    def copy(self):
+        return Vector2(self.x, self.y)
 
     def magnitude(self):
         return (self.x**2 + self.y**2)**0.5
@@ -223,10 +305,10 @@ class Block:
         return hash((self.position.x, self.position.y, self.position.z))
 
     def __str__(self) -> str:
-        return f"{self.type} : {self.position}"
+        return f"{self.type} - {self.position}"
 
     def __repr__(self) -> str:
-        return f"{self.type} : {self.position}"
+        return f"{self.type} - {self.position}"
     
     def __eq__(self, other):
         if not isinstance(other, type(self)): return NotImplemented
@@ -249,9 +331,8 @@ class Map:
         return {x for x in self.current_map if predicate(x)}
 
     
-    def add_block(self, name, position):
-        if position not in self.current_map:
-            self.current_map[position] = Block(position, name)
+    def add_block(self, name, position: Vector3):
+        self.current_map[position] = Block(position, name)
         with self.shared_lock:
             if self.shared_map is not None:
                 block = Block(position, name)

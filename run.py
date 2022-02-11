@@ -63,7 +63,7 @@ def update():
             sy += block.position.y
             sz += block.position.z
             if not block.instantiated:
-                print(f"Instantiating block {block}")
+                #print(f"Instantiating block {block}")
                 if len(block.type) < 3:
                     block.type += "extra"
                 voxel = Voxel(position=(block.position.x, block.position.y, block.position.z), colorrgb=[(ord(c.lower())-97)*8 for c in block.type[:3]])
@@ -78,10 +78,22 @@ def update():
             camera.y = sy + 10
             camera.z = sz - 10
 
+    with player_lock:
+        camera.x = player_position.x - 10
+        camera.y = player_position.y + 10
+        camera.z = player_position.z - 10
+        
+        player.x = player_position.x
+        player.y = player_position.y
+        player.z = player_position.z
+
 
 
 shared_lock = Lock()
 shared_map = set()
+
+player_lock = Lock()
+player_position = Vector3(0,0,0)
 
 existing_blocks = set()
 
@@ -91,6 +103,8 @@ running.set()
 
 
 voxel = Voxel(position=(0,-60,0))
+
+player = Voxel(position=(0,-60,0))
 
 free_roam = False
 pressed_last_frame = False
@@ -108,7 +122,7 @@ window.late_init()
 window.position = Vec2(3500, 1920/3)
 Sky()
 
-data = Thread(target=datacollector.start, args=(shared_map, shared_lock, running))
+data = Thread(target=datacollector.start, args=(shared_map, shared_lock, running, player_position, player_lock))
 
 data.start()
 try:

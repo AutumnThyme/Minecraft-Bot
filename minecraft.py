@@ -2,6 +2,7 @@
 Module offers api for controlling the player through computer vision and simulating keypresses.
 """
 from math import floor
+
 from utility import *
 import mss
 
@@ -61,10 +62,10 @@ class MinecraftPlayer:
         self.action_queue.append({"type": "coordinate", "value": {"coord": position, "keydown_z": None, "keydown_x": None, "crouch": False, "original": None} })
 
     def add_pathfind_coordinate_to_queue(self, position: Vector3):
-        self.action_queue.append({"type": "coordinate", "value": {"coord": position, "state": "start", "original": None} })
+        self.action_queue.append({"type": "pathfind", "value": {"coord": position, "state": "start", "original": None, "visited": []} })
 
     def _insert_events(self, events, position):
-        return self.action_queue[:position] + events + self.action_queue[position:]
+        self.action_queue = self.action_queue[:position] + events + self.action_queue[position:]
 
     def _get_event(self, event_name, value):
         if event_name == "rotation":
@@ -106,6 +107,10 @@ class MinecraftPlayer:
             result = self.serve_click()
             if result:
                 self.action_queue.pop(0)
+        elif action["type"] == "pathfind":
+            result = self.serve_pathfind()
+            if result:
+                self.action_queue.pop(0)
         else:
             raise Exception(f"Unkown action {action}")
         
@@ -120,7 +125,6 @@ class MinecraftPlayer:
             print("righclicked")
         
         return True
-
 
 
     def serve_pathfind(self):
@@ -154,33 +158,16 @@ class MinecraftPlayer:
             return True
         
         if state == "start":
+            print("Scanning")
             # Search area for coordinates and obstacles (defined by 3x3 ground + walls on each side of 3x3 ground)
             # We can use the insertion of rotation events + reinsertion of pathfind event at index 1 afterwards to interrupt the current process
             # and start the rotation events, after those complete, return to pathfinding.
             
             # Recall that player position = block_on.y + 1
-            rotations = [
-                # Forward
-                BlockRotation(Vector2(0,0), block_position.add(Vector3(0, 1, 1))),
-                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, 0, 1))),
-                BlockRotation(Vector2(0,60), block_position.add(Vector3(0, -1, 1))),
-                BlockRotation(Vector2(0,90), block_position.add(Vector3(0, -1, 0))),
-                # Left
-                BlockRotation(Vector2(-90, 0), block_position.add(Vector3(1, 1, 0))),
-                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, 0, 0))),
-                BlockRotation(Vector2(-90, 60), block_position.add(Vector3(1, -1, 0))),
-                # Backwards
-                BlockRotation(Vector2(180, 0), block_position.add(Vector3(0, 1, -1))),
-                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, 0, -1))),
-                BlockRotation(Vector2(180, 60), block_position.add(Vector3(0, -1, -1))),
-                # Right
-                BlockRotation(Vector2(90, 0), block_position.add(Vector3(-1, 1, 0))),
-                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, 0, 0))),
-                BlockRotation(Vector2(90, 60), block_position.add(Vector3(-1, -1, 0))),
-            ]
+            rotations = get_neighboring_blocks(block_position)
 
             # Remove unneeded block scans
-            events = [self._get_event("rotation", x.rotation) for x in rotations if x.position not in self.map]
+            events = [self._get_event("rotation", x.rotation) for x in rotations if x.position not in self.map.current_map]
             self.action_queue[0]["value"]["state"] = "move"
             events.append(self.action_queue[0])
             
@@ -188,12 +175,76 @@ class MinecraftPlayer:
             self._insert_events(events, 1)
             return True
         elif state == "move":
+            print("moving")
             # Given the map and current position, determine the best position to pick.
             # If current position is completely blocked, set current position to blocked and backtrack.
             # We can block the position by inserting a block into the map with id "blocked coordinate" and the given position.y+2.
-            pass
+            neighbors = get_neighboring_blocks_dict(block_position)
+
+            choices = []
+
+            # Remove blocked neighbors
+            for ne in neighbors:
+                # This is the direction
+                n = neighbors[ne]
+                # Check that node does not have blocks blocking it.
+                blocked = False
+                hole = False
+                for nw in n["rest"]:
+                    blocked = blocked or nw.position in self.map.current_map
+                    if nw.position in self.map.current_map:
+                        print(f"Block {nw.position} blocks {n['start'].position}.")
+                
+                # Check that node is not a hole
+                hole = hole or n["start"].position not in self.map.current_map
+                if n["start"].position not in self.map.current_map:
+                    print(f"Block {n['start'].position} does not exist to stand on.")
+                if not (blocked or hole):
+                    choices.append(n["start"])
+            
+            choices = [x for x in choices if x.position not in self.action_queue[0]["value"]["visited"]]
+
+            # Exit if we run out of possible paths
+            if len(choices) <= 0:
+                print(f"[ERROR] Pathfinding failed to find path to {desired_position}, all neighboring blocks are blocked at coordinate {current_position}")
+                print(f"Map: {self.map.current_map}")
+                return True
+            
+            if len(choices) == 1 and not hole:
+                # Current block should become blocked - so we wall the area off in the map.
+                self.map.add_block("PATHFINDING_BLOCKED", block_position)
+                self.map.add_block("PATHFINDING_BLOCKED", block_position.add(Vector3(0,1,0)))
+
+            # Pick the choice that minimizes the vector to the desired position (this is 100% a shitty heuristic)
+            choice = choices[0]
+            rest = choices[1:]
+            for curr in rest:
+                delta_choice = desired_position.subtract(choice.position)
+                delta_current = desired_position.subtract(curr.position)
+                if delta_choice.magnitude() > delta_current.magnitude():
+                    choice = curr.copy()
+
+
+            self.action_queue[0]["value"]["visited"].append(choice.position.copy())
+
+            #choice.position.x -= 0.5 if choice.position.x < 0 else -0.5
+            #choice.position.y -= 0.5 if choice.position.y < 0 else -0.5
+            #hoice.position.z -= 0.5 if choice.position.z < 0 else -0.5
+            choice_dir = choice.position.subtract(block_position)
+            choice_position = current_position.add(choice_dir)
+
+            print(f"Adding pathfind node {choice_position}")
+
+            events = [self._get_event("coordinate", choice_position.copy())]
+            self.action_queue[0]["value"]["state"] = "start"
+            events.append(self.action_queue[0])
+            
+            # Insert loop into event queue
+            self._insert_events(events, 1)
+            return True
         else:
             raise Exception(f"[ERROR] Unknown Pathfinding State: {state}")
+
 
     def serve_coordinate(self):
         """
@@ -220,8 +271,8 @@ class MinecraftPlayer:
 
         # Set tolerances
         tap_duration = 0.03
-        tap_tolerance = 0.1
-        crouch_tolerance = 0.5
+        tap_tolerance = 0.3
+        crouch_tolerance = 2
         error_tolerance = 0.05
 
         if abs(delta_position.x) < error_tolerance and abs(delta_position.z) < error_tolerance:
@@ -504,18 +555,17 @@ class MinecraftPlayer:
 
         if abs(difference) <= 0.1:
             if self.action_queue[0]["value"]["keydown"] != "None":
-                print("keyup")
                 pydirectinput.keyUp(self.action_queue[0]["value"]["keydown"])
 
             if self.action_queue[0]["value"]["slow"]:
                 pydirectinput.keyUp("ctrl")
                 self.action_queue[0]["value"]["slow"] = False
 
-            print(f"moved {units_moved} / {units_desired} from {orig_position} to {self.position}")
+            #print(f"moved {units_moved} / {units_desired} from {orig_position} to {self.position}")
             print(f"Done moving {units_desired} units")
             return True
         else:
-            print(f"moved {units_moved} / {units_desired} from {orig_position} to {self.position}")
+            #print(f"moved {units_moved} / {units_desired} from {orig_position} to {self.position}")
             if difference > 0:
                 if self.action_queue[0]["value"]["keydown"] != "w":
                     if self.action_queue[0]["value"]["keydown"] != "None":
@@ -559,12 +609,12 @@ class MinecraftPlayer:
         my = linmap(mouse_y, -90, 90, -600, 600)
 
         if abs(mouse_x) < error_tol and abs(mouse_y) < error_tol:
-            print(f"Done rotating to {desired_rotation}")
+            #print(f"Done rotating to {desired_rotation}")
             return True
         else:
             mx = ceil(mx)
             my = ceil(my)
-            print(f"moving mouse: {(int(mx), int(my))}")
+            #print(f"moving mouse: {(int(mx), int(my))}")
             ctypes.windll.user32.mouse_event(0x01, int(mx), int(-my), 0, 0)
         return False
 
@@ -620,8 +670,8 @@ class MinecraftPlayer:
         self.prev_time = self.time
 
         if block_pos and block_type:
-            print(f"Adding block to map {self.target_type}: {self.target_position}")
-            self.map.add_block(self.target_type, self.target_position)
+            #print(f"Adding block to map {self.target_type}: {self.target_position}")
+            self.map.add_block(self.target_type, self.target_position.copy())
         if coord and rot:
             # Go through actions
             self.serve_action()
@@ -683,11 +733,11 @@ class MinecraftPlayer:
             
             self.prev_rotation.reassign(self.rotation.x, self.rotation.y)
 
-            if speed.magnitude() > self.max_rotation_tolerance:
-                print("Coord error, invalid rotation")
+            #if speed.magnitude() > self.max_rotation_tolerance:
+                #print("Coord error, invalid rotation")
             #print(f"\tRotation - X: {self.rotation.x}, Y: {self.rotation.y}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dt: {dt}")
         else:
-            print(f"[Error] Could not parse rotation this frame: {rot_text}")
+            #print(f"[Error] Could not parse rotation this frame: {rot_text}")
             return False
         return True
 
@@ -713,11 +763,11 @@ class MinecraftPlayer:
             
             self.prev_target_position.reassign(self.target_position.x, self.target_position.y, self.target_position.z)
 
-            if speed.magnitude() > self.max_target_tolerance:
-                print("Coord error, invalid speed")
-            print(f"\tTargetCoords - X: {self.target_position.x}, Y: {self.target_position.y}, Z: {self.target_position.z}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dz: {dz}, dt: {dt}")
+            #if speed.magnitude() > self.max_target_tolerance:
+                #print("Coord error, invalid speed")
+            #print(f"\tTargetCoords - X: {self.target_position.x}, Y: {self.target_position.y}, Z: {self.target_position.z}", f"\t\tSpeed - dx: {dx}, dy: {dy}, dz: {dz}, dt: {dt}")
         else:
-            print(f"[Error] Could not parse target coordinates this frame: {block_position_text}")
+            #print(f"[Error] Could not parse target coordinates this frame: {block_position_text}")
             return False
         return True
 
@@ -728,8 +778,8 @@ class MinecraftPlayer:
         if match:
             self.prev_target_type = self.target_type
             self.target_type = match.group(0)
-            print(f"\tTargetType - {self.target_type}")
+            #print(f"\tTargetType - {self.target_type}")
         else:
-            print(f"[Error] Could not parse target type this frame: {block_type_text}")
+            #print(f"[Error] Could not parse target type this frame: {block_type_text}")
             return False
         return True

@@ -80,6 +80,7 @@ def walk_fill_square(player: MinecraftPlayer, n):
 
     player.add_rotation_to_queue(Vector2(0, 0))
 
+
 def walk_square(player: MinecraftPlayer, n):
     origin = Vector3(1.5, -60, -27.5)
 
@@ -134,17 +135,20 @@ def make_square(player: MinecraftPlayer, n):
     
 
 
-def start(shared_map, shared_lock, running):
-    bb_coords = (45, 210, 400, 230)
-    bb_rotation = (75, 265, 550, 285)
-    bb_block_coords = (2560-400, 370, 2560, 391)
-    bb_block_type = (2560-500, 393, 2560, 411)
-
-
-    #bb_coords = (45, 190, 400, 210)
-    #bb_rotation = (75, 245, 550, 265)
-    #bb_block_coords = (2560-400, 370, 2560, 391)
-    #bb_block_type = (2560-500, 393, 2560, 411)
+def start(shared_map, shared_lock, running, shared_player_position, shared_player_position_lock):
+    mode = "s"
+    if mode == "s":
+        # SinglePlayer
+        bb_coords = (45, 210, 400, 230)
+        bb_rotation = (75, 265, 550, 285)
+        bb_block_coords = (2560-400, 370, 2560, 391)
+        bb_block_type = (2560-500, 393, 2560, 411)
+    else:
+        # Multiplayer
+        bb_coords = (45, 190, 400, 210)
+        bb_rotation = (75, 245, 550, 265)
+        bb_block_coords = (2560-400, 370, 2560, 391)
+        bb_block_type = (2560-500, 393, 2560, 411)
 
     #bb_block_type = (2560-250, 393, 2560, 412)
 
@@ -159,11 +163,7 @@ def start(shared_map, shared_lock, running):
         time.sleep(4)
         print("Starting")
 
-        player.add_coordinate_to_queue(Vector3(30, -60, 30))
-        player.add_coordinate_to_queue(Vector3(40, -60, 30))
-        player.add_coordinate_to_queue(Vector3(40, -60, 40))
-        player.add_coordinate_to_queue(Vector3(30, -60, 40))
-        player.add_coordinate_to_queue(Vector3(30, -60, 30))
+        player.add_pathfind_coordinate_to_queue(Vector3(46.5, -55, -9.5))
         
     
         # used to record the time when we processed last frame
@@ -176,6 +176,10 @@ def start(shared_map, shared_lock, running):
         while running.is_set():
 
             success = player.update(api)
+            with shared_player_position_lock:
+                shared_player_position.x = player.position.x
+                shared_player_position.y = player.position.y
+                shared_player_position.z = player.position.z
 
             height, width = player.current_position_image.shape
             resized_rotation_image = cv2.resize(player.current_rotation_image, (width, height))
