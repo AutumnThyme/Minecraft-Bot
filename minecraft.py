@@ -2,6 +2,8 @@
 Module offers api for controlling the player through computer vision and simulating keypresses.
 """
 from math import floor
+from pathlib import Path
+from pathfinder import Pathfinder
 
 from utility import *
 import mss
@@ -62,7 +64,7 @@ class MinecraftPlayer:
         self.action_queue.append({"type": "coordinate", "value": {"coord": position, "keydown_z": None, "keydown_x": None, "crouch": False, "original": None} })
 
     def add_pathfind_coordinate_to_queue(self, position: Vector3):
-        self.action_queue.append({"type": "pathfind", "value": {"coord": position, "state": "start", "original": None, "visited": []} })
+        self.action_queue.append({"type": "pathfind", "value": {"coord": position, "state": "start", "original": None, "pathfinder": None} })
 
     def _insert_events(self, events, position):
         self.action_queue = self.action_queue[:position] + events + self.action_queue[position:]
@@ -136,9 +138,15 @@ class MinecraftPlayer:
         Event loops work by inserting events after this one, then after the inserted events
         we insert another pathfinding event with some managed state.
         """
+        if self.action_queue[0]["value"]["original"] is None:
+            self.action_queue[0]["value"]["original"] = self.position.copy()
+        if self.action_queue[0]["value"]["pathfinder"] is None:
+            self.action_queue[0]["value"]["pathfinder"] = Pathfinder(self.action_queue[0]["value"]["original"], self.action_queue[0]["value"]["coord"])
+
         desired_position = self.action_queue[0]["value"]["coord"]
         state = self.action_queue[0]["value"]["state"]
         original = self.action_queue[0]["value"]["original"]
+        pathfinder = self.action_queue[0]["value"]["pathfinder"]
 
         current_position = self.position
 
@@ -153,7 +161,7 @@ class MinecraftPlayer:
         # Should be larger than coordinate event tolerance
         coordinate_tolerance = 0.5
 
-        if abs(delta_position.x) < coordinate_tolerance and abs(delta_position.y) < coordinate_tolerance:
+        if abs(delta_position.x) < coordinate_tolerance and abs(delta_position.z) < coordinate_tolerance:
             print(f"[INFO] Pathfinding complete, arrived at {desired_position} with error {delta_position}")
             return True
         
@@ -182,6 +190,7 @@ class MinecraftPlayer:
             neighbors = get_neighboring_blocks_dict(block_position)
 
             choices = []
+            blocked_neighbors = []
 
             # Remove blocked neighbors
             for ne in neighbors:
@@ -201,41 +210,31 @@ class MinecraftPlayer:
                     print(f"Block {n['start'].position} does not exist to stand on.")
                 if not (blocked or hole):
                     choices.append(n["start"])
+                else:
+                    blocked_neighbors.append(n["start"])
             
-            choices = [x for x in choices if x.position not in self.action_queue[0]["value"]["visited"]]
-
             # Exit if we run out of possible paths
             if len(choices) <= 0:
                 print(f"[ERROR] Pathfinding failed to find path to {desired_position}, all neighboring blocks are blocked at coordinate {current_position}")
                 print(f"Map: {self.map.current_map}")
                 return True
             
-            if len(choices) == 1 and not hole:
-                # Current block should become blocked - so we wall the area off in the map.
-                self.map.add_block("PATHFINDING_BLOCKED", block_position)
-                self.map.add_block("PATHFINDING_BLOCKED", block_position.add(Vector3(0,1,0)))
+            for bl in blocked_neighbors:
+                self.map.add_block("PATHFINDING_BLOCKED", bl.position.copy())
+                self.map.add_block("PATHFINDING_BLOCKED", bl.position.copy().add(Vector3(0,1,0)))
 
-            # Pick the choice that minimizes the vector to the desired position (this is 100% a shitty heuristic)
-            choice = choices[0]
-            rest = choices[1:]
-            for curr in rest:
-                delta_choice = desired_position.subtract(choice.position)
-                delta_current = desired_position.subtract(curr.position)
-                if delta_choice.magnitude() > delta_current.magnitude():
-                    choice = curr.copy()
+            blocked_neighbors = [x.position.copy() for x in blocked_neighbors]
 
+            # Using d*-lite iterate func which will add any new obstacles to the map, then get the next position.
+            choice = pathfinder.iterate(blocked_neighbors)
 
-            self.action_queue[0]["value"]["visited"].append(choice.position.copy())
+            if choice == None:
+                print(f"[INFO] Pathfinding complete, arrived at {desired_position} with error {delta_position}")
+                return True
 
-            #choice.position.x -= 0.5 if choice.position.x < 0 else -0.5
-            #choice.position.y -= 0.5 if choice.position.y < 0 else -0.5
-            #hoice.position.z -= 0.5 if choice.position.z < 0 else -0.5
-            choice_dir = choice.position.subtract(block_position)
-            choice_position = current_position.add(choice_dir)
+            print(f"Adding pathfind node {choice}")
 
-            print(f"Adding pathfind node {choice_position}")
-
-            events = [self._get_event("coordinate", choice_position.copy())]
+            events = [self._get_event("coordinate", choice.copy())]
             self.action_queue[0]["value"]["state"] = "start"
             events.append(self.action_queue[0])
             
@@ -358,13 +357,15 @@ class MinecraftPlayer:
 
     def serve_coordinates_long(self):
         """
+        This action is not as good as serve_coordinate
+
         Need to define a control scheme:
         w, a, s, d
         ctrl + (w, a ,s, d)
         
         Given this control scheme, a players current coords, current orientation, go to desired coordinates (expected that no blocks block the way)
 
-        Move forward (w) until the left and right (a,d) perpendicular axis lines up with the point then move along that axis.
+        Move forward (w) until the left and right (a,d) perpendicular axis lines up with the point then move along that axis (slower but "walks around" the axis).
 
         """
         desired_position = self.action_queue[0]["value"]["coord"]
